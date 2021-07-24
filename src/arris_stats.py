@@ -106,6 +106,8 @@ def main():
         # Where should 6we send the results?
         if destination == 'influxdb':
             send_to_influx(stats, config)
+        elif destination == 'influxdb2':
+            send_to_influx2(stats, config)
         elif destination == 'timestream':
             send_to_aws_time_stream(stats, config)
         else:
@@ -147,6 +149,14 @@ def get_default_config():
         'influx_password': None,
         'influx_use_ssl': False,
         'influx_verify_ssl': True,
+
+        # Influx2
+        'influx2_url': 'http://localhost:8086',
+        'influx2_bucket': 'cable_modem_stats',
+        'influx2_org': None,
+        'influx2_token': None,
+        'influx2_use_ssl': False,
+        'influx2_verify_ssl': True,
 
         # AWS Timestream
         'timestream_aws_access_key_id': None,
@@ -293,22 +303,8 @@ def get_html(config, credential):
     return status_html
 
 
-def send_to_influx(stats, config):
-    """ Send the stats to InfluxDB """
-    logging.info('Sending stats to InfluxDB (%s:%s)', config['influx_host'], config['influx_port'])
-
-    from influxdb import InfluxDBClient
-    from influxdb.exceptions import InfluxDBClientError, InfluxDBServerError
-
-    influx_client = InfluxDBClient(
-        config['influx_host'],
-        config['influx_port'],
-        config['influx_username'],
-        config['influx_password'],
-        config['influx_database'],
-        config['influx_use_ssl'],
-        config['influx_verify_ssl'],
-    )
+def build_for_influx(stats):
+    """ Build the stats for InfluxDB or InfluxDB 2 """
 
     series = []
     current_time = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -349,6 +345,28 @@ def send_to_influx(stats, config):
                 record['fields'][field] = int(stats_up[field])
         series.append(record)
 
+    return(series)
+
+
+def send_to_influx(stats, config):
+    """ Send the stats to InfluxDB """
+    logging.info('Sending stats to InfluxDB (%s:%s)', config['influx_host'], config['influx_port'])
+
+    from influxdb import InfluxDBClient
+    from influxdb.exceptions import InfluxDBClientError, InfluxDBServerError
+
+    influx_client = InfluxDBClient(
+        config['influx_host'],
+        config['influx_port'],
+        config['influx_username'],
+        config['influx_password'],
+        config['influx_database'],
+        config['influx_use_ssl'],
+        config['influx_verify_ssl'],
+    )
+
+    series = build_for_influx(stats)
+
     try:
         influx_client.write_points(series)
     except (InfluxDBClientError, ConnectionError, InfluxDBServerError, ConnectionRefusedError) as exception:
@@ -367,6 +385,27 @@ def send_to_influx(stats, config):
     logging.info('Successfully wrote data to InfluxDB')
     logging.debug('Influx series sent to db:')
     logging.debug(series)
+
+
+def send_to_influx2(stats, config):
+    """ Send the stats to InfluxDB 2 """
+    logging.info('Sending stats to InfluxDB2 (%s)', config['influx2_url'])
+
+    from influxdb_client import InfluxDBClient, WriteApi, WriteOptions
+
+    influx_client = InfluxDBClient(
+        url=config['influx2_url'],
+        token=config['influx2_token'],
+        org=config['influx2_org'],
+        verify_ssl=['influx2_verify_ssl']
+    )
+
+    series = build_for_influx(stats)
+
+    try:
+        influx_client.write_api().write(config['influx2_bucket'], config['influx2_org'], series)
+    except Exception as e:
+        logging.error(e)
 
 
 def send_to_aws_time_stream(stats, config):
